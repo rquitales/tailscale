@@ -298,7 +298,12 @@ func wrap(logf logger.Logf, tdev tun.Device, isTAP bool, m *usermetric.Registry,
 	for _, q := range tun.QueuesOf(tdev) {
 		w.readQueues = append(w.readQueues, &wrapperQueue{w: w, q: q})
 	}
-	// Depth 1: a lone TSMP reject must not park wireguard-go's receive goroutine.
+	// Wireguard-go calls back into [Wrapper.filterPacketInboundFromWireGuard]
+	// during write. That may inject a TSMP reject via [Wrapper.InjectOutbound].
+	// With depth 0, inbound delivery (shared among the ReceiveFunc peers)
+	// blocks until the outbound routine picks the reject up.
+	// Depth 1 raises the threshold from one reject to two, and replicates the
+	// past vectorOutbound behaviour.
 	w.injectionQueue = &injectionQueue{w: w, ch: make(chan tunInjectedRead, 1)}
 
 	if buildfeatures.HasTUNDevStats {
