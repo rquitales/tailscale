@@ -239,7 +239,7 @@ func TestReadAndInject(t *testing.T) {
 	}()
 
 	// The device's own packets and the injected ones arrive on separate queues.
-	readAll := func(what string, q wgtun.Queue, want int) []string {
+	readQueue := func(what string, q wgtun.Queue, want int) []string {
 		t.Helper()
 		got := make([]string, 0, want)
 		slab, packets := getSinglePacketReadArgs()
@@ -262,10 +262,10 @@ func TestReadAndInject(t *testing.T) {
 		return got
 	}
 
-	if got := readAll("device queue", tun.Queues()[0], len(written)); !slices.Equal(got, written) {
+	if got := readQueue("device queue", tun.Queues()[0], len(written)); !slices.Equal(got, written) {
 		t.Errorf("device queue: got %q; want %q", got, written)
 	}
-	if got := readAll("injection queue", tun.injectionQueue, len(injected)); !slices.Equal(got, injected) {
+	if got := readQueue("injection queue", tun.injectionQueue, len(injected)); !slices.Equal(got, injected) {
 		t.Errorf("injection queue: got %q; want %q", got, injected)
 	}
 }
@@ -386,7 +386,6 @@ func TestFilter(t *testing.T) {
 	tun.SetConnectionCounter(stats.Add)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var n int
 			var err error
 			var filtered bool
 
@@ -409,9 +408,10 @@ func TestFilter(t *testing.T) {
 				// chtun.Outbound is unbuffered, and won't be drained until the
 				// first Read call.
 				go func() { chtun.Outbound <- tt.data }()
-				n, err = tun.Queues()[0].Read(getSinglePacketReadArgs())
+				var pkts [][]byte
+				pkts, err = tun.ReadAll()
 				// In the read direction, errors are fatal, so we return n = 0 instead.
-				filtered = (n == 0)
+				filtered = len(pkts) == 0
 			}
 
 			if err != nil {
@@ -1122,7 +1122,7 @@ func TestInterceptOrdering(t *testing.T) {
 	go func() {
 		chtun.Outbound <- udp4("1.2.3.4", "5.6.7.8", 98, 98) // Simulate tun device sending.
 	}()
-	tun.Queues()[0].Read(getSinglePacketReadArgs())
+	tun.ReadAll()
 
 	if seq != numOutboundIntercepts {
 		t.Errorf("got number of intercepts run in Read(): %d; want: %d", seq, numOutboundIntercepts)
@@ -1147,16 +1147,20 @@ func TestInjectedReadCallsAppConnectorHook(t *testing.T) {
 		t.Fatalf("InjectOutbound error: %v", err)
 	}
 
-	slab, packets := getSinglePacketReadArgs()
-	tun.injectionQueue.Read(slab, packets)
+	gotPkts, err := tun.ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+	if len(gotPkts) != 1 {
+		t.Fatalf("ReadAll returned %d packets, want 1", len(gotPkts))
+	}
 
 	if !called {
 		t.Error("app connector hook was not called in InjectOutbound")
 	}
 
 	wantPkt := udp4("169.254.0.1", "100.25.63.57", 80, 12345)
-	gotPkt := slab[packets[0].Offset : packets[0].Offset+packets[0].Size]
-	if !bytes.Equal(wantPkt, gotPkt) {
+	if gotPkt := gotPkts[0]; !bytes.Equal(wantPkt, gotPkt) {
 		t.Errorf("packet mismatch\nwant:\t% x\ngot:\t% x", wantPkt, gotPkt)
 	}
 }
