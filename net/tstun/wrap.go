@@ -135,11 +135,6 @@ type Wrapper struct {
 
 	// closed signals the queues (by closing) when the device is closed.
 	closed chan struct{}
-	// outboundMu is held across injectOutbound's send, so that an injection
-	// queue nobody reads is visible to [Wrapper.ProbeLocks].
-	//
-	// TODO(illotum): can we signal deadlock to the watchdog without mu?
-	outboundMu sync.Mutex
 
 	// eventsUpDown yields up and down tun.Events that arrive on a Wrapper's events channel.
 	eventsUpDown chan tun.Event
@@ -471,8 +466,6 @@ func (t *Wrapper) InjectionQueue() tun.Queue {
 // injectOutbound hands r to the injection queue's reader, or releases it if
 // the Wrapper is closed.
 func (t *Wrapper) injectOutbound(r tunInjectedRead) {
-	t.outboundMu.Lock()
-	defer t.outboundMu.Unlock()
 	select {
 	case t.injectionQueue.ch <- r:
 	case <-t.closed:
@@ -784,8 +777,7 @@ func (t *Wrapper) IdleDuration() time.Duration {
 
 // ProbeLocks acquires and releases Wrapper's internal mutexes.
 func (t *Wrapper) ProbeLocks() {
-	t.outboundMu.Lock()
-	t.outboundMu.Unlock()
+	// no-op until we have any
 }
 
 func (t *Wrapper) awaitStart() {
