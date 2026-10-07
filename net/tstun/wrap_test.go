@@ -228,27 +228,26 @@ func TestReadAndInject(t *testing.T) {
 		}
 	}()
 
-	for _, packet := range injected {
-		go func(packet string) {
+	go func() {
+		for _, packet := range injected {
 			payload := []byte(packet)
 			err := tun.InjectOutbound(payload)
 			if err != nil {
 				t.Errorf("%s: error: %v", packet, err)
 			}
-		}(packet)
-	}
+		}
+	}()
 
 	// The device's own packets and the injected ones arrive on separate queues.
-	readAll := func(what string, q wgtun.Queue, want int) map[string]bool {
+	readAll := func(what string, q wgtun.Queue, want int) []string {
 		t.Helper()
-		seen := make(map[string]bool)
+		got := make([]string, 0, want)
 		slab, packets := getSinglePacketReadArgs()
-		// We expect the same packets back, in no particular order.
 		for i := range want {
 			numPackets, err := q.Read(slab, packets)
 			if err != nil {
 				t.Errorf("%s read %d: error: %v", what, i, err)
-				return seen
+				return got
 			}
 			if numPackets != 1 {
 				t.Fatalf("%s read %d packets, expected %d", what, numPackets, 1)
@@ -257,32 +256,17 @@ func TestReadAndInject(t *testing.T) {
 			if packetLen := len(packet); packetLen != size {
 				t.Errorf("%s read %d: got size %d; want %d", what, i, packetLen, size)
 			}
-			got := string(packet)
-			t.Logf("%s read %d: got %s", what, i, got)
-			seen[got] = true
+			t.Logf("%s read %d: got %s", what, i, packet)
+			got = append(got, string(packet))
 		}
-		return seen
+		return got
 	}
 
-	// Within a queue we expect the same packets back, in no particular order.
-	fromDevice := readAll("device queue", tun.Queues()[0], len(written))
-	fromInject := readAll("injection queue", tun.injectionQueue, len(injected))
-
-	for _, packet := range written {
-		if !fromDevice[packet] {
-			t.Errorf("%s not received on the device queue", packet)
-		}
-		if fromInject[packet] {
-			t.Errorf("%s arrived on the injection queue", packet)
-		}
+	if got := readAll("device queue", tun.Queues()[0], len(written)); !slices.Equal(got, written) {
+		t.Errorf("device queue: got %q; want %q", got, written)
 	}
-	for _, packet := range injected {
-		if !fromInject[packet] {
-			t.Errorf("%s not received on the injection queue", packet)
-		}
-		if fromDevice[packet] {
-			t.Errorf("%s arrived on the device queue", packet)
-		}
+	if got := readAll("injection queue", tun.injectionQueue, len(injected)); !slices.Equal(got, injected) {
+		t.Errorf("injection queue: got %q; want %q", got, injected)
 	}
 }
 
